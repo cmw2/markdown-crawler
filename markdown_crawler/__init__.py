@@ -66,7 +66,6 @@ def normalize_url(url: str) -> str:
 def crawl(
     url: str,
     base_url: str,
-    already_crawled: set,
     file_path: str,
     target_links: Union[str, List[str]] = DEFAULT_TARGET_LINKS,
     target_content: Union[str, List[str]] = None,
@@ -75,9 +74,7 @@ def crawl(
     is_base_path_match: Optional[bool] = DEFAULT_BASE_PATH_MATCH,
     is_links: Optional[bool] = False
 ) -> List[str]:
-
-    if url in already_crawled:
-        return []
+    
     try:
         logger.debug(f'Crawling: {url}')
         
@@ -109,7 +106,7 @@ def crawl(
                 # Make redirect URL absolute
                 redirect_url = urllib.parse.urljoin(url, redirect_url)
                 logger.debug(f'Redirect from {url} to {redirect_url}')
-                
+
                 # Check if redirect stays within allowed domain
                 if is_domain_match:
                     redirect_domain = urllib.parse.urlparse(redirect_url).netloc
@@ -149,9 +146,7 @@ def crawl(
     if 'text/html' not in response.headers.get('Content-Type', ''):
         logger.error(f'❌ Content not text/html for {url}')
         return []
-    already_crawled.add(url)
-
-    # ---------------------------------
+    
     # List of elements we want to strip
     # ---------------------------------
     strip_elements = []
@@ -191,16 +186,16 @@ def crawl(
                 strip=strip_elements
             )
 
-            logger.info(f'Created 📝 {file_name}')
-
             # ------------------------------
             # Write markdown content to file
             # ------------------------------
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(output)
+
+            logger.info(f'Created 📝 {file_name}')
         else:
             logger.error(f'❌ Empty content for {file_path}. Target selectors: {target_content}')
-            logger.debug(f'Available elements on page: {[tag.name for tag in soup.find_all()][:20]}')  # Show first 20 element types
+            #logger.debug(f'Available elements on page: {[tag.name for tag in soup.find_all()][:20]}')  # Show first 20 element types
 
     child_urls = get_target_links(
         soup,
@@ -232,8 +227,8 @@ def get_target_content(
             if elements:
                 for element in elements:
                     content += f'{str(element)}'.replace('\n', '')
-            else:
-                logger.debug(f'No elements found for selector: {target}')
+            # else:
+            #     logger.debug(f'No elements found for selector: {target}')
 
     # ---------------------------
     # Naive estimation of content
@@ -301,7 +296,8 @@ def worker(
     q: object,
     base_url: str,
     max_depth: int,
-    already_crawled: set,
+    queued_urls: set,
+    url_lock: threading.Lock,
     base_dir: str,
     stop_flag: threading.Event,
     target_links: Union[List[str], None] = DEFAULT_TARGET_LINKS,
@@ -319,6 +315,7 @@ def worker(
             continue
             
         if depth > max_depth or stop_flag.is_set():
+            logging.debug(f'Skipping {url} at depth {depth} (max depth {max_depth})')
             continue
             
         # Create a more unique filename using the full URL including domain
@@ -343,10 +340,12 @@ def worker(
             
         file_path = f'{base_dir.rstrip("/") + "/"}{file_name}.md'
 
+        # URL is guaranteed to be unique from queue.Queue() thread safety
+        # No need for additional duplicate checking here
+        
         child_urls = crawl(
             url,
             base_url,
-            already_crawled,
             file_path,
             target_links,
             target_content,
@@ -356,9 +355,16 @@ def worker(
             is_links
         )
         child_urls = [normalize_url(u) for u in child_urls]
-        for child_url in child_urls:
-            if not stop_flag.is_set():
-                q.put((depth + 1, child_url))
+        
+        # Only add URLs to queue that haven't been seen before
+        with url_lock:
+            for child_url in child_urls:
+                if not stop_flag.is_set() and child_url not in queued_urls:
+                    q.put((depth + 1, child_url))
+                    queued_urls.add(child_url)  # Mark as seen to prevent duplicates
+                    logger.debug(f'Added to queue: {child_url} at depth {depth + 1}')
+                else:
+                    logger.debug(f'Skipping already seen URL: {child_url}')
         time.sleep(1)
 
 
@@ -412,7 +418,8 @@ def md_crawl(
     if not os.path.exists(base_dir):
         os.makedirs(base_dir)
 
-    already_crawled = set()
+    queued_urls = set()  # Track URLs that have been seen/queued
+    url_lock = threading.Lock()  # Lock for thread-safe access to queued_urls
     stop_flag = threading.Event()
 
     # Create a queue of URLs to crawl
@@ -420,6 +427,7 @@ def md_crawl(
 
     # Add the base URL to the queue
     q.put((0, base_url))
+    queued_urls.add(base_url)  # Track that base URL is queued
 
     threads = []
 
@@ -431,7 +439,8 @@ def md_crawl(
                 q,
                 base_url,
                 max_depth,
-                already_crawled,
+                queued_urls,
+                url_lock,
                 base_dir,
                 stop_flag,
                 target_links,
