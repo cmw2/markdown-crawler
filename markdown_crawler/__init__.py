@@ -428,6 +428,9 @@ def md_crawl(
         logging.basicConfig(level=logging.INFO)
 
     logger.info(f'🕸️ Crawling {base_url} at ⏬ depth {max_depth} with 🧵 {num_threads} threads')
+    
+    # Record start time for elapsed time calculation
+    start_time = time.time()
 
     # Validate the base URL
     if not is_valid_url(base_url):
@@ -494,4 +497,10 @@ def md_crawl(
                 if t.is_alive():
                     logger.warning(f'Thread {t.name} did not exit gracefully')
 
-    logger.info('🏁 All threads have finished')
+    # Calculate and log elapsed time
+    elapsed_time = time.time() - start_time
+    minutes, seconds = divmod(elapsed_time, 60)
+    if minutes > 0:
+        logger.info(f'🏁 All threads have finished - Total time: {int(minutes)}m {seconds:.1f}s')
+    else:
+        logger.info(f'🏁 All threads have finished - Total time: {elapsed_time:.1f}s')
