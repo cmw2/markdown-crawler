@@ -192,15 +192,18 @@ def crawl(
             # ------------------------------
             # Write markdown content to file
             # ------------------------------
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(output)
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(output)
 
-            # Increment file counter thread-safely
-            if files_created is not None and file_counter_lock is not None:
-                with file_counter_lock:
-                    files_created[0] += 1
-                    
-            logger.info(f'[T{worker_index}] Created 📝 {file_name}')
+                # Increment file counter thread-safely only if write succeeded
+                if files_created is not None and file_counter_lock is not None:
+                    with file_counter_lock:
+                        files_created[0] += 1
+                        
+                logger.info(f'[T{worker_index}] Created 📝 {file_name}')
+            except (OSError, IOError, UnicodeEncodeError) as e:
+                logger.error(f'[T{worker_index}] ❌ Failed to write file {file_path}: {e}')
         else:
             logger.error(f'[T{worker_index}] ❌ Empty content for {file_path}. Target selectors: {target_content}')
             #logger.debug(f'Available elements on page: {[tag.name for tag in soup.find_all()][:20]}')  # Show first 20 element types
