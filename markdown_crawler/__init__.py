@@ -382,15 +382,19 @@ def worker(
         )
         child_urls = [normalize_url(u) for u in child_urls]
         
-        # Only add URLs to queue that haven't been seen before
-        with url_lock:
-            for child_url in child_urls:
-                if not stop_flag.is_set() and child_url not in queued_urls:
-                    q.put((depth + 1, child_url))
-                    queued_urls.add(child_url)  # Mark as seen to prevent duplicates
-                    logger.debug(f'[T{worker_index}] Added to queue: {child_url} at depth {depth + 1}')
-                # else:
-                #     logger.debug(f'[T{worker_index}] Skipping already seen URL: {child_url}')
+        # Check if we can add child URLs (not at max depth yet)
+        if depth < max_depth:
+            # Only add URLs to queue that haven't been seen before
+            with url_lock:
+                for child_url in child_urls:
+                    if not stop_flag.is_set() and child_url not in queued_urls:
+                        q.put((depth + 1, child_url))
+                        queued_urls.add(child_url)  # Mark as seen to prevent duplicates
+                        logger.debug(f'[T{worker_index}] Added to queue: {child_url} at depth {depth + 1}')
+                    else:
+                        logger.debug(f'[T{worker_index}] Skipping already seen URL: {child_url}')
+        else:
+            logger.debug(f'[T{worker_index}] Not adding any URLs - at max depth {max_depth}')
         # Mark worker as inactive after processing
         active_workers[worker_index] = False
         
