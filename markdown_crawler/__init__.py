@@ -68,6 +68,8 @@ def crawl(
     base_url: str,
     file_path: str,
     worker_index: int = -1,
+    files_created: list = None,
+    file_counter_lock: threading.Lock = None,
     target_links: Union[str, List[str]] = DEFAULT_TARGET_LINKS,
     target_content: Union[str, List[str]] = None,
     valid_paths: Union[str, List[str]] = None,
@@ -193,7 +195,12 @@ def crawl(
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(output)
 
-            logger.info(f'[T{worker_index}]  Created 📝 {file_name}')
+            # Increment file counter thread-safely
+            if files_created is not None and file_counter_lock is not None:
+                with file_counter_lock:
+                    files_created[0] += 1
+                    
+            logger.info(f'[T{worker_index}] Created 📝 {file_name}')
         else:
             logger.error(f'[T{worker_index}] ❌ Empty content for {file_path}. Target selectors: {target_content}')
             #logger.debug(f'Available elements on page: {[tag.name for tag in soup.find_all()][:20]}')  # Show first 20 element types
@@ -303,6 +310,8 @@ def worker(
     stop_flag: threading.Event,
     active_workers: list,
     worker_index: int,
+    files_created: list,
+    file_counter_lock: threading.Lock,
     target_links: Union[List[str], None] = DEFAULT_TARGET_LINKS,
     target_content: Union[List[str], None] = None,
     valid_paths: Union[List[str], None] = None,
@@ -362,6 +371,8 @@ def worker(
             base_url,
             file_path,
             worker_index,
+            files_created,
+            file_counter_lock,
             target_links,
             target_content,
             valid_paths,
@@ -444,6 +455,10 @@ def md_crawl(
     url_lock = threading.Lock()  # Lock for thread-safe access to queued_urls
     stop_flag = threading.Event()
     active_workers = [False] * num_threads  # Track which workers are currently processing
+    
+    # File creation counter and lock for thread-safe access
+    files_created = [0]  # Use list to make it mutable for threads
+    file_counter_lock = threading.Lock()
 
     # Create a queue of URLs to crawl
     q = queue.Queue()
@@ -468,6 +483,8 @@ def md_crawl(
                 stop_flag,
                 active_workers,
                 i,  # worker index
+                files_created,
+                file_counter_lock,
                 target_links,
                 target_content,
                 valid_paths,
@@ -497,10 +514,12 @@ def md_crawl(
                 if t.is_alive():
                     logger.warning(f'Thread {t.name} did not exit gracefully')
 
-    # Calculate and log elapsed time
+    # Calculate and log elapsed time and file count
     elapsed_time = time.time() - start_time
     minutes, seconds = divmod(elapsed_time, 60)
+    total_files = files_created[0]
+    
     if minutes > 0:
-        logger.info(f'🏁 All threads have finished - Total time: {int(minutes)}m {seconds:.1f}s')
+        logger.info(f'🏁 All threads have finished - Total time: {int(minutes)}m {seconds:.1f}s - Files created: {total_files}')
     else:
-        logger.info(f'🏁 All threads have finished - Total time: {elapsed_time:.1f}s')
+        logger.info(f'🏁 All threads have finished - Total time: {elapsed_time:.1f}s - Files created: {total_files}')
